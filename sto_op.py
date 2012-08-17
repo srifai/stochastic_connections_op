@@ -74,7 +74,7 @@ class StochasticConnectionsOp(theano.Op):
             z[0] = numpy.asarray(numpy.dot(x, numpy.sign(y)*b))
         except ValueError, e:
             if 1:
-                raise ValueError('dot product failed.\n'
+                raise ValueError('Stochastic Connections failed.\n'
                                  'First arg dims: ' + str(x.shape) + '\n'
                                  'Second arg dims: ' + str(y.shape) + '\n'
                                  'First arg: \n' +
@@ -100,6 +100,6 @@ if __name__ == "__main__" :
     x = T.matrix()
     W = theano.shared(value = numpy.random.random(size=(5,10)).astype('float32'))
     h = sc(x,W)
-    dhdW = T.grad(T.sum(h),x)
+    dhdW = T.grad(T.sum(h),W)
     f = theano.function([x],dhdW)
     print f(numpy.ones((2,5)).astype('float32'))
