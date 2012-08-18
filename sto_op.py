@@ -9,7 +9,47 @@ from theano.gof import Apply, Constant, Op, Type, Variable
 def sigmoid(x):
     return 1./(1.+numpy.exp(-x))
 
+class FastBinomial(Op):
+    def __eq__(self, other):
+        return type(self) == type(other)
+
+    def __hash__(self):
+        return hash(type(self))
+
+    def make_node(self, x):
+        x = T.as_tensor_variable(x)
+        y = tensor(dtype=x.dtype,
+                   broadcastable=x.broadcastable)
+        return Apply(self, [x], [y])
+
+    def perform(self, node, inp, out):
+        x = inp[0]
+        out[0] = numpy.array( [ [numpy.random.binomial(1,x[i,j]) for j in range(x.shape[1]) ] for i in range(x.shape[0]) ],dtype=numpy.bool)
+        assert out[0].shape == x.shape
+
+    def c_code(self, node, name, inames, onames, sub):
+        x, = inames
+        y, = onames
+        fail = sub['fail']
+        r = """
+        Py_XDECREF(%(y)s);
+        %(y)s = (PyArrayObject*)PyArray_NewLikeArray(%(x)s, NPY_KEEPORDER, NULL,0);
+        double xval;
+        dtype_%(y)s * y = (dtype_%(y)s*)%(y)s->data;
+        dtype_%(x)s * x = (dtype_%(x)s*)%(x)s->data;
+        for (int i = 0; i < %(y)s->dimensions[0]; ++i){
+        xval = x[i];
+        y[i] = (dtype_%(x)s)  ((double)rand()/(double)RAND_MAX > xval) ? 1. : 0. ;}
+        """
+        return r % locals()
+
+fastbinomial = FastBinomial()
+
 class StochasticConnectionsGrad(Op):
+    def __init__(self):
+        tmp = T.matrix()
+        self.fb = theano.function([tmp],fastbinomial(tmp.flatten()).reshape(tmp.shape),allow_input_downcast=True)
+
     def __eq__(self, other):
         return type(self) == type(other)
 
@@ -27,13 +67,17 @@ class StochasticConnectionsGrad(Op):
     def perform(self, node, inp, out):
         x, gz = inp
         gx = out[0]
-        b = numpy.array( [ [numpy.random.binomial(1,x[i,j]) for j in range(x.shape[1]) ] for i in range(x.shape[0]) ],dtype=numpy.bool)
+        b = self.fb(x)
         gx[0] = numpy.mean(numpy.array([ gz[i]*(b-x) for i in range(gz.shape[0]) ]),axis=0)
         assert gx[0].shape == x.shape
 
 sc_grad = StochasticConnectionsGrad()
 
 class StochasticConnectionsOp(theano.Op):
+    def __init__(self):
+        tmp = T.matrix()
+        self.fb = theano.function([tmp],fastbinomial(tmp.flatten()).reshape(tmp.shape),allow_input_downcast=True)
+
     def make_node(self, *inputs):
         inputs = map(as_tensor_variable, inputs)
 
@@ -70,8 +114,7 @@ class StochasticConnectionsOp(theano.Op):
         x, y = inp
         z, = out
         try:
-            b = numpy.array( [ [numpy.random.binomial(1,sigmoid(y[i,j])) for j in range(y.shape[1]) ] for i in range(y.shape[0]) ],dtype=numpy.bool)
-            z[0] = numpy.asarray(numpy.dot(x, numpy.sign(y)*b))
+            z[0] = numpy.asarray(numpy.dot(x, numpy.sign(y)*self.fb(y)))
         except ValueError, e:
             if 1:
                 raise ValueError('Stochastic Connections failed.\n'
@@ -90,16 +133,12 @@ class StochasticConnectionsOp(theano.Op):
         rval = sc(gz, y.T), sc_grad(T.nnet.sigmoid(y),gz)
         return T.cast(rval[0], x.dtype), T.cast(rval[1], y.dtype)
 
-    # C implementation: [see theano web site for other functions]
-    # def c_code(self,*args):
-    #    pass
-
 sc = StochasticConnectionsOp()
 
 if __name__ == "__main__" :
     x = T.matrix()
-    W = theano.shared(value = numpy.random.random(size=(5,10)).astype('float32'))
+    W = theano.shared(value = numpy.random.random(size=(784,10)).astype('float32'))
     h = sc(x,W)
     dhdW = T.grad(T.sum(h),W)
-    f = theano.function([x],dhdW)
-    print f(numpy.ones((2,5)).astype('float32'))
+    f = theano.function([x],h)
+    print f(numpy.ones((2,784)).astype('float32'))
