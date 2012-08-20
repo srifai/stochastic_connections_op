@@ -114,7 +114,7 @@ class StochasticConnectionsOp(theano.Op):
         x, y = inp
         z, = out
         try:
-            z[0] = numpy.asarray(numpy.dot(x, numpy.sign(y)*self.fb(y)))
+            z[0] = sigmoid(numpy.asarray(numpy.dot(x, numpy.sign(y)*self.fb(y))))
         except ValueError, e:
             if 1:
                 raise ValueError('Stochastic Connections failed.\n'
